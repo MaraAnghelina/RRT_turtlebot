@@ -4,30 +4,38 @@ from chk_collision import chk_collision
 from dist import dist
 from no_collision import no_collision
 from slam_to_mat import plot_obstacle_poly
+from testImg import process_map
+from coordImg import intervalCoord
 
 import numpy as np
 import matplotlib.pyplot as plt
+import shapely
+from shapely.geometry import Point, Polygon
+from scipy.spatial import ConvexHull
 
 
-def rrt(x, y):
-    x_max = 0.51
-    y_max = 2.51
-    EPS = 1
-    numNodes = 500
+def rrt(x, y, ax, x_goal, y_goal):
+    EPS = 0.5
+    numNodes = 5 #de schimbat numarul de puncte sa fie mai mic
 
     q_start = {'coord': [x, y], 'cost': 0, 'parent': 0}
-    q_goal = {'coord': [-0.4, 1.94], 'cost': 0}
+    q_goal = {'coord': [x_goal, y_goal], 'cost': 0}
     poly = []
 
     nodes = [q_start]
+    pathNodes = [q_start]
 
-    fig, ax = plt.subplots()
+    img_path = "/home/internship/processed_map_inv.pgm"
+    img_yaml = "map.yaml"
+    x_min, x_max, y_min, y_max = intervalCoord(img_path, img_yaml)
 
-    plot_obstacle_poly(ax, "black", poly)
+    map_points = plot_obstacle_poly(ax, "black", poly, img_path)
 
-    print(x_max, y_max)
-    ax.plot(x, y, 'go', markersize=5, markerfacecolor='g')
-    ax.plot(-0.4, 1.94, 'ro', markersize=5, markerfacecolor='r')
+    hull_points = np.array(map_points)
+    hull = ConvexHull(hull_points)
+    polygon = Polygon(hull_points[hull.vertices])
+
+    ax.plot(x , y, 'go', markersize=5, markerfacecolor='g')
 
     plt.ion()
     plt.show()
@@ -39,7 +47,12 @@ def rrt(x, y):
         K1 = np.random.rand()
         thenorm1 = np.linalg.norm(K1)
         
-        q_rand = [np.random.uniform(-0.5, x_max), np.random.uniform(-2.5, y_max)]
+        while True:
+            q_rand_candidate = [np.random.uniform(x_min, x_max), np.random.uniform(y_min, y_max)]
+            if polygon.contains(Point(q_rand_candidate)):
+                q_rand = q_rand_candidate
+                break
+        #q_rand = [np.random.uniform(x_min, x_max), np.random.uniform(y_min, y_max)]
         ax.plot(q_rand[0], q_rand[1], 'x', color=[0, 0.4470, 0.7410])
         plt.pause(0.01)
         
@@ -58,7 +71,7 @@ def rrt(x, y):
             q_new['cost'] = dist(q_new['coord'], q_near['coord']) + q_near['cost']
             
             q_nearest = []
-            r = 60
+            r = 30
             for node in nodes:
                 if chk_collision([node['coord'], q_new['coord']], poly) == 0 and dist(node['coord'], q_new['coord']) <= r:
                     q_nearest.append(node)
@@ -70,44 +83,15 @@ def rrt(x, y):
                 if dist(neighbor['coord'], q_new['coord']) + neighbor['cost'] < C_min:
                     q_min = neighbor
                     C_min = neighbor['cost'] + dist(neighbor['coord'], q_new['coord'])
-                    ax.plot([q_min['coord'][0], q_new['coord'][0]], [q_min['coord'][1], q_new['coord'][1]], 'g-')
+                    #ax.plot([q_min['coord'][0], q_new['coord'][0]], [q_min['coord'][1], q_new['coord'][1]], 'g-')
                     plt.pause(0.01)
             
             q_new['parent'] = nodes.index(q_min)
             nodes.append(q_new)
-        
-        result1.append(thenorm1)
-        elapsed_time1.append(K1)
 
-    result_avg1 = np.mean(result1)
-    time_avg1 = np.mean(elapsed_time1)
+    q_next = min(nodes, key=lambda p: dist(p['coord'], q_goal['coord']))
+    print(q_next)
+    return q_next
 
-    D = [dist(node['coord'], q_goal['coord']) for node in nodes]
-
-    result2 = []
-    elapsed_time2 = []
-
-    for j in range(len(nodes)):
-        K2 = np.random.rand()
-        thenorm2 = np.linalg.norm(K2)
-        result2.append(thenorm2)
-        elapsed_time2.append(K2)
-
-    result_avg2 = np.mean(result2)
-    time_avg2 = np.mean(elapsed_time2)
-
-    q_final = nodes[np.argmin(D)]
-    q_goal['parent'] = nodes.index(q_final)
-    q_end = q_goal
-
-    nodes.append(q_goal)
-
-    while q_end['parent'] != 0:
-        start = q_end['parent']
-        ax.plot([q_end['coord'][0], nodes[start]['coord'][0]], [q_end['coord'][1], nodes[start]['coord'][1]], 'r-', linewidth=3)
-        plt.pause(0.01)
-        
-        q_end = nodes[start]
-
-    plt.ioff()
-    plt.show()
+#fig, ax = plt.subplots()
+#q = rrt(1, 1, ax, 2, 2)
