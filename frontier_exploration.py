@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 import tf2_ros
 import tf_conversions
 import rospy
@@ -53,9 +55,16 @@ def clear_costmaps():
 
 #------------------------------------------------------------
 
+def test(frontier):
+    global robot_position
+    print(robot_position)
+    if (abs(robot_position[0]) >= abs(frontier[0]) - 0.30 and abs(robot_position[0]) <= abs(frontier[0]) + 0.30) and (abs(robot_position[1]) >= abs(frontier[1]) - 0.30 and abs(robot_position[1]) <= abs(frontier[1]) + 0.30):
+        return True
+    return False
+
 #Go to a point----------------------------------------------------------------
 def go_to_point(frontier):
-    global goalReached, mapData, plannerTrigger
+    global goalReached, mapData, plannerTrigger, robot_position
 
     velPub = rospy.Publisher('/move_base_simple/goal', PoseStamped, queue_size=10)
     cmd = PoseStamped()
@@ -73,14 +82,13 @@ def go_to_point(frontier):
     plannerTrigger = False
     velPub.publish(cmd)
 
-    while not goalReached:
+    while not test(frontier):
         print("Asteptam sa ajungem la obiectiv...") 
         rospy.sleep(0.5)  
         velPub.publish(cmd)    
 
     rospy.sleep(1)
     if plannerTrigger == True:
-        print("AICI")
         return
 #-----------------------------------------------------------------------------
 
@@ -126,8 +134,8 @@ def draw_map(mapData):
     o = cv2.bitwise_not(o) 
     res = cv2.bitwise_and(o, edges)
 
-    plt.imshow(im2)
-    plt.show()
+    #plt.imshow(im2)
+    #plt.show()
 
     return res
 
