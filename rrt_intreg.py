@@ -14,7 +14,7 @@ from scipy.spatial import ConvexHull
 
 def rrt(x, y, ax, x_goal, y_goal):
     EPS = 0.5
-    numNodes = 5 #de schimbat numarul de puncte sa fie mai mic
+    numNodes = 500 #de schimbat numarul de puncte sa fie mai mic
 
     q_start = {'coord': [x, y], 'cost': 0, 'parent': 0}
     q_goal = {'coord': [x_goal, y_goal], 'cost': 0}
@@ -23,8 +23,8 @@ def rrt(x, y, ax, x_goal, y_goal):
     nodes = [q_start]
     pathNodes = [q_start]
 
-    img_path = "/home/internship/processed_map_inv.pgm"
-    img_yaml = "map.yaml"
+    img_path = "/home/internship/worldHomeMap.pgm"
+    img_yaml = "worldHomeMap.yaml"
     x_min, x_max, y_min, y_max = intervalCoord(img_path, img_yaml)
 
     map_points = plot_obstacle_poly(ax, "black", poly, img_path)
@@ -66,33 +66,38 @@ def rrt(x, y, ax, x_goal, y_goal):
         q_new = {'coord': steer(q_rand, q_near['coord'], np.min(ndist), EPS)}
         
         if chk_collision_rrt([q_near['coord'], q_new['coord']], vector_obstacle_hulls) == 0:
-            ax.plot([q_near['coord'][0], q_new['coord'][0]], [q_near['coord'][1], q_new['coord'][1]], 'k-', linewidth=2)
-            plt.pause(0.01)
-            
+            ax.plot([q_near['coord'][0], q_new['coord'][0]],
+                    [q_near['coord'][1], q_new['coord'][1]],
+                    'k-', linewidth=1)
+            plt.pause(0.001)
+
             q_new['cost'] = dist(q_new['coord'], q_near['coord']) + q_near['cost']
-            
-            q_nearest = []
-            r = 30
-            for node in nodes:
-                if chk_collision_rrt([node['coord'], q_new['coord']], vector_obstacle_hulls) == 0 and dist(node['coord'], q_new['coord']) <= r:
-                    q_nearest.append(node)
-            
-            q_min = q_near
-            C_min = q_new['cost']
-            
-            for neighbor in q_nearest:
-                if dist(neighbor['coord'], q_new['coord']) + neighbor['cost'] < C_min:
-                    q_min = neighbor
-                    C_min = neighbor['cost'] + dist(neighbor['coord'], q_new['coord'])
-                    #ax.plot([q_min['coord'][0], q_new['coord'][0]], [q_min['coord'][1], q_new['coord'][1]], 'g-')
-                    plt.pause(0.01)
-            
-            q_new['parent'] = nodes.index(q_min)
+            q_new['parent'] = nodes.index(q_near)
             nodes.append(q_new)
 
-    q_next = min(nodes, key=lambda p: dist(p['coord'], q_goal['coord']))
-    print(q_next)
-    return q_next
+            if dist(q_new['coord'], q_goal['coord']) < EPS and chk_collision_rrt([q_new['coord'], q_goal['coord']], vector_obstacle_hulls) == 0:
+                q_goal['parent'] = nodes.index(q_new)
+                nodes.append(q_goal)
+                print("Goal reached!")
+                break
+
+    path = []
+    if q_goal in nodes:
+        current = q_goal
+    else:
+        current = min(nodes, key=lambda n: dist(n['coord'], q_goal['coord']))
+
+    while 'parent' in current:
+        path.append(current['coord'])
+        current = nodes[current['parent']]
+    path.append(q_start['coord'])
+    path.reverse()
+
+    for i in range(len(path) - 1):
+        ax.plot([path[i][0], path[i + 1][0]], [path[i][1], path[i + 1][1]], 'g-', linewidth=2)
+        plt.pause(0.001)
+
+    return path
 
 #fig, ax = plt.subplots()
 #q = rrt(1, 1, ax, 2, 2)
