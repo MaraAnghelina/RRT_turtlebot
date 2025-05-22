@@ -1,24 +1,32 @@
-#!/usr/bin/env python
-
 import tf2_ros
 import tf_conversions
 import rospy
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
-import subprocess
+import time
+import math  
 
 from nav_msgs.msg import Odometry, OccupancyGrid
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Quaternion, PointStamped
 from std_srvs.srv import Empty 
 from visualization_msgs.msg import Marker
 from rosgraph_msgs.msg import Log
+from geometry_msgs.msg import Twist
 from copy import copy
+
+from set_init_pose import set_initial_pose, euler_from_quaternion
+from get_frontier import get_closest_frontier, get_furthest_frontier, is_point_occupied, get_closest_frontier_failed, get_furthest_frontier_failed
+
+TIME_LIMIT = 15
 
 robot_position = (0, 0)
 goalReached = False 
 setInitPose = False
 plannerTrigger = False
+lastFrontier = None
+lastFrontierTime = time.time()
+failed_frontiers = []
     
 
 # Subscribers' callbacks------------------------------
@@ -31,13 +39,7 @@ def mapCallBack(data):
 
 def log_callback(msg):
     global goalReached, plannerTrigger
-    if "Goal reached" in msg.msg:  
-        rospy.loginfo("Obiectivul a fost atins")
-        goalReached = True
-    if "DWA planner failed to produce path." or "Rotation cmd in collision" in msg.msg:
-        #rospy.loginfo("miscare imposibila")
-        rospy.sleep(3)
-        plannerTrigger = True
+    
 
 #-------------------------------------------------------------
 
@@ -64,7 +66,7 @@ def test(frontier):
 
 #Go to a point----------------------------------------------------------------
 def go_to_point(frontier):
-    global goalReached, mapData, plannerTrigger, robot_position
+    global goalReached, mapData, robot_position, lastFrontierTime, failed_frontiers
 
     velPub = rospy.Publisher('/move_base_simple/goal', PoseStamped, queue_size=10)
     cmd = PoseStamped()
@@ -80,70 +82,56 @@ def go_to_point(frontier):
 
     goalReached = False
     plannerTrigger = False
+    lastFrontierTime = time.time()
+
+    if test(frontier):
+        frontier = get_closest_frontier_failed(robot_position, mapData, frontier)
+        cmd.pose.position.x = frontier[0] 
+        cmd.pose.position.y = frontier[1]
+
     velPub.publish(cmd)
 
     while not test(frontier):
         print("Asteptam sa ajungem la obiectiv...") 
+        print(test(frontier))
         rospy.sleep(0.5)  
+
+        if is_point_occupied(frontier[0], frontier[1], mapData):
+            print("Frontier is in object")
+            rospy.sleep(0.5)
+
+            failed_frontiers = frontier
+
+            frontier = get_furthest_frontier_failed(robot_position, mapData, frontier)
+            cmd.pose.position.x = frontier[0] 
+            cmd.pose.position.y = frontier[1]
+
+            lastFrontierTime = time.time()
+
+        #if time.time() - lastFrontierTime > TIME_LIMIT:
+         #   print("More than  15sec")
+          #  rospy.sleep(0.5)
+
+#            frontier = get_furthest_frontier(robot_position, mapData)
+#            cmd.pose.position.x = frontier[0]
+#            cmd.pose.position.y = frontier[1]
+
+#            lastFrontierTime = time.time()
+
         velPub.publish(cmd)    
 
     rospy.sleep(1)
-    if plannerTrigger == True:
-        return
-#-----------------------------------------------------------------------------
-
-
-#Save the explored map -------------------------------------------------------
-def save_map(filename):
-    try:
-        retcode = subprocess.call(['rosrun', 'map_server', 'map_saver', '-f', filename])
-        if retcode == 0:
-            rospy.loginfo("Map saved successfully!")
-        else:
-            rospy.logerr("Map saving failed with return code: {}".format(retcode))
-    except OSError as e:
-        rospy.logerr("Execution failed" % e)
-
-#-----------------------------------------------------------------------------
-
-#Show the map that the robot sees at th epoint function is called -----------
-def draw_map(mapData):
-    data = mapData.data
-    w = mapData.info.width
-    h = mapData.info.height
-    resolution = mapData.info.resolution
-    Xstartx = mapData.info.origin.position.x
-    Xstarty = mapData.info.origin.position.y
-	 
-    img = np.zeros((h, w, 1), np.uint8)
-	
-    for i in range(0,h):
-    	for j in range(0,w):
-    		if data[i*w+j] == 100:
-    			img[i,j] = 0
-    		elif data[i*w+j] == 0:
-    			img[i,j] = 255
-    		elif data[i*w+j] == -1:
-    			img[i,j] = 205
+    #print("Start rotating")
+    #rotate_360()
+    #rospy.sleep(1)
     
-	
-   	o = cv2.inRange(img,0,1)
-    edges = cv2.Canny(img,0,255)
-    im2, contours, hierarchy = cv2.findContours(o,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
-    cv2.drawContours(o, contours, -1, (255,255,255), 5)
-    o = cv2.bitwise_not(o) 
-    res = cv2.bitwise_and(o, edges)
-
-    #plt.imshow(im2)
-    #plt.show()
-
-    return res
-
 #-----------------------------------------------------------------------------
+
+
 
 #EXploration function -------------------------------------------------------
 def explore():
-    global mapData, robot_position
+    global mapData, robot_position, lastFrontier, lastFrontierTime
 
     exploration_goal = PointStamped()
     map_topic= rospy.get_param('~map_topic','/map')
@@ -177,33 +165,20 @@ def explore():
     points.color.a = 1
     points.lifetime = rospy.Duration(0)  #0 = forever
 
+    rotate_360()
 
     while not rospy.is_shutdown():
 
-        frontiers = frontier_detection()
+        frontier = get_furthest_frontier(robot_position, mapData)
 
-        rx = robot_position[0]
-        ry = robot_position[1]
-        print(robot_position)
-
-        #Compute distances to all frontiers
-        if frontiers is None:
-            save_map('/home/internship/explored_map')
-            rospy.sleep(2)
-            rospy.loginfo("Explored all map")
-            rospy.signal_shutdown("Explored all map")
-            exit()
-        dists = [np.linalg.norm(np.array([rx, ry]) - np.array([pt[0], pt[1]])) for pt in frontiers]
-
-        #Choose the closest
-        min_idx = np.argmin(dists)
-        closestFrontier = frontiers[min_idx]
-        print("Closest frontier: ", closestFrontier)
+        if lastFrontier is None:
+            lastFrontier = frontier
+            lastFrontierTime = time.time()
 
         exploration_goal.header.frame_id = mapData.header.frame_id
         exploration_goal.header.stamp = rospy.Time.now()
-        exploration_goal.point.x = closestFrontier[0] - 0.2
-        exploration_goal.point.y = closestFrontier[1]
+        exploration_goal.point.x = frontier[0]
+        exploration_goal.point.y = frontier[1]
         exploration_goal.point.z = 0
 
         targetspub.publish(exploration_goal)
@@ -211,110 +186,30 @@ def explore():
         pub.publish(points)
         rospy.sleep(1)
 
-        go_to_point(closestFrontier)
+        #adjusted_goal = shift_frontier_towards_robot(frontier, robot_position, offset=0.3)
+        
+        go_to_point(frontier)
 
 #---------------------------------------------------------------------------------
 
-def world_to_map_index(x, y, mapData):
-    res = mapData.info.resolution
-    origin_x = mapData.info.origin.position.x
-    origin_y = mapData.info.origin.position.y
-    width = mapData.info.width
-
-    mx = int((x - origin_x) / res)
-    my = int((y - origin_y) / res)
-
-    #Check bounds
-    if mx < 0 or my < 0 or mx >= width or my >= mapData.info.height:
-        return None  #out of bounds
-
-    index = my * width + mx
-    return index
-
-
-def is_point_occupied(x, y, mapData):
-    index = world_to_map_index(x, y, mapData)
-    if index is None:
-        return True  #out of bounds = unsafe
-
-    value = mapData.data[index]
-    return value == 100  #100 = occupied
-
-
-#Function for getting the frontier -----------------------------------------------
-def get_frontier(res):
-    global mapData
-    resolution = mapData.info.resolution
-    Xstartx = mapData.info.origin.position.x
-    Xstarty = mapData.info.origin.position.y
-
-    frontier = copy(res)
-    im2, contours, hierarchy = cv2.findContours(frontier,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
-    cv2.drawContours(frontier, contours, -1, (255,255,255), 2)
-
-    im2, contours, hierarchy = cv2.findContours(frontier,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
-    all_pts = []
-    if len(contours) > 0:
-    	upto = len(contours) - 1
-    	i = 0
-    	maxx = 0
-    	maxind = 0
-		
-    	for i in range(0,len(contours)):
-                cnt = contours[i]
-                M = cv2.moments(cnt)
-                cx = int(M['m10']/M['m00'])
-                cy = int(M['m01']/M['m00'])
-                xr = cx * resolution + Xstartx
-                yr = cy * resolution + Xstarty
-                pt = [np.array([xr,yr])]
-                if is_point_occupied(xr, yr, mapData) == True:
-                    print("Frontiera ", xr, yr, "este obstacol")
-
-                if len(all_pts) > 0:
-                    all_pts = np.vstack([all_pts,pt])
-                else:
-                    all_pts = pt
-	
-	return all_pts
-#--------------------------------------------------------------------------------
-
-
-#Function for frontier detection ----------------------------
-def frontier_detection():
+def shift_frontier_towards_robot(frontier_point, robot_pos, offset=0.3):
     global mapData
 
-    res = draw_map(mapData)
-    all_pts = get_frontier(res)
-    #print(all_pts)
+    vector = np.array(frontier_point) - np.array(robot_pos)
+    dist = np.linalg.norm(vector)
+    if dist == 0:
+        return frontier_point  # avoid division by zero
 
-    return all_pts
+    # Normalize vector
+    direction = vector / dist
 
-#-------------------------------------------------------------------------------
+    # New target is offset meters closer to robot along that vector
+    new_target = np.array(frontier_point) - direction * offset
 
+    if is_point_occupied(new_target[0], new_target[1], mapData):
+        print("OBIECT")
 
-#Init pose in Rvizz so that you don t use anymore 2D PoseEstimate --------------
-def set_initial_pose(x, y, yaw):
-    pub = rospy.Publisher('/initialpose', PoseWithCovarianceStamped, queue_size=10)
-    rospy.sleep(1)
-
-    msg = PoseWithCovarianceStamped()
-    msg.header.stamp = rospy.Time.now()
-    msg.header.frame_id = "map"
-
-    msg.pose.pose.position.x = x
-    msg.pose.pose.position.y = y
-    msg.pose.pose.position.z = 0.0
-
-
-    quaternion = tf_conversions.transformations.quaternion_from_euler(0, 0, yaw)
-    msg.pose.pose.orientation = Quaternion(*quaternion)
-
-    pub.publish(msg)
-    rospy.loginfo("initial pose set in Rviz")
-    clear_costmaps()
-
-#-----------------------------------------------------------
+    return new_target.tolist()
 
 
 def odom_callback(msg):
@@ -336,6 +231,28 @@ def odom_callback(msg):
     robot_position = (x, y)
 
     #rospy.signal_shutdown("frontier found")
+
+def rotate_360():
+    
+    pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+    twist = Twist()
+
+    #Rotate in place (angular z)
+    twist.angular.z = 0.5  #radians per second (positive = left)
+    duration = 2 * 3.14159 / twist.angular.z  #12.57 seconds for full 360
+
+    rate = rospy.Rate(10)
+    start_time = rospy.Time.now().to_sec()
+
+    while rospy.Time.now().to_sec() - start_time < duration:
+        pub.publish(twist)
+        rospy.sleep(0.5)
+
+    # Stop rotation
+    twist.angular.z = 0.0
+    pub.publish(twist)
+    print("Rotation complete.")
+    rospy.sleep(1)
 
 
 def main():
