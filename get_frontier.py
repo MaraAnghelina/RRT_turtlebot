@@ -8,7 +8,7 @@ import subprocess
 import rospy
 
 from copy import copy
-
+from random import randrange
 
 #Show the map that the robot sees at th epoint function is called -----------
 def draw_map(mapData):
@@ -233,6 +233,30 @@ def get_furthest_frontier_failed(robot_position, mapData, failedFrontier):
     print("Furthest frontier: ", furthestFrontier)
 
     return furthestFrontier
+
+#------------------------------------------------------------------------------------------------------------
+
+#Function for deciding the random frontier ------------------------------------------------------------------
+def get_random_frontier(robot_position, mapData):
+
+    frontiers = frontier_detection(mapData)
+
+    rx = robot_position[0]
+    ry = robot_position[1]
+    print(robot_position)
+
+    if frontiers is None:
+        finish_exploring()
+        exit()
+    
+
+    #Choose the random frontier
+    idx = randrange(0, len(frontiers))
+    randomFrontier = frontiers[idx]
+    print("Random frontier: ", randomFrontier)
+
+    return randomFrontier
+
 
 #------------------------------------------------------------------------------------------------------------
 

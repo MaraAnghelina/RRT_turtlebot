@@ -16,6 +16,8 @@ def clear_costmaps():
     except rospy.ServiceException as e:
         rospy.logerr("Failed to clear costmaps: %s" % e)
 
+
+#Init pose in Rvizz so that you don t use anymore 2D PoseEstimate -----------------------
 def set_initial_pose(x, y, yaw):
     pub = rospy.Publisher('/initialpose', PoseWithCovarianceStamped, queue_size=10)
     rospy.sleep(1)
@@ -37,6 +39,8 @@ def set_initial_pose(x, y, yaw):
     rospy.loginfo("initial pose set in Rviz")
     rospy.sleep(1)
     clear_costmaps()
+
+#---------------------------------------------------------------------------------------------
 
 def quaternion_from_euler(roll, pitch, yaw):
     qx = math.sin(roll/2) * math.cos(pitch/2) * math.cos(yaw/2) - math.cos(roll/2) * math.sin(pitch/2) * math.sin(yaw/2)

@@ -16,9 +16,10 @@ from geometry_msgs.msg import Twist
 from copy import copy
 
 from set_init_pose import set_initial_pose, euler_from_quaternion
-from get_frontier import get_closest_frontier, get_furthest_frontier, is_point_occupied, get_closest_frontier_failed, get_furthest_frontier_failed
+from get_frontier import get_closest_frontier, get_furthest_frontier, is_point_occupied, get_closest_frontier_failed, get_furthest_frontier_failed, get_random_frontier
 
 TIME_LIMIT = 15
+
 
 robot_position = (0, 0)
 goalReached = False 
@@ -27,6 +28,7 @@ plannerTrigger = False
 lastFrontier = None
 lastFrontierTime = time.time()
 failed_frontiers = []
+nrFrontiers = 0
     
 
 # Subscribers' callbacks------------------------------
@@ -66,7 +68,7 @@ def test(frontier):
 
 #Go to a point----------------------------------------------------------------
 def go_to_point(frontier):
-    global goalReached, mapData, robot_position, lastFrontierTime, failed_frontiers
+    global goalReached, mapData, robot_position, lastFrontierTime, failed_frontiers, nrFrontiers
 
     velPub = rospy.Publisher('/move_base_simple/goal', PoseStamped, queue_size=10)
     cmd = PoseStamped()
@@ -83,9 +85,10 @@ def go_to_point(frontier):
     goalReached = False
     plannerTrigger = False
     lastFrontierTime = time.time()
+    nrFrontiers += 1
 
     if test(frontier):
-        frontier = get_closest_frontier_failed(robot_position, mapData, frontier)
+        frontier = get_furthest_frontier_failed(robot_position, mapData, frontier)
         cmd.pose.position.x = frontier[0] 
         cmd.pose.position.y = frontier[1]
 
@@ -107,16 +110,20 @@ def go_to_point(frontier):
             cmd.pose.position.y = frontier[1]
 
             lastFrontierTime = time.time()
+            nrFrontiers += 1
+            print("NUmber of frontiers: ", nrFrontiers)
 
-        #if time.time() - lastFrontierTime > TIME_LIMIT:
-         #   print("More than  15sec")
-          #  rospy.sleep(0.5)
+        if time.time() - lastFrontierTime > TIME_LIMIT:
+            print("More than  15sec")
+            rospy.sleep(0.5)
 
-#            frontier = get_furthest_frontier(robot_position, mapData)
-#            cmd.pose.position.x = frontier[0]
-#            cmd.pose.position.y = frontier[1]
+            frontier = get_furthest_frontier(robot_position, mapData)
+            cmd.pose.position.x = frontier[0]
+            cmd.pose.position.y = frontier[1]
 
-#            lastFrontierTime = time.time()
+            lastFrontierTime = time.time()
+            nrFrontiers += 1
+            print("NUmber of frontiers: ", nrFrontiers)
 
         velPub.publish(cmd)    
 
@@ -131,7 +138,7 @@ def go_to_point(frontier):
 
 #EXploration function -------------------------------------------------------
 def explore():
-    global mapData, robot_position, lastFrontier, lastFrontierTime
+    global mapData, robot_position, lastFrontier, lastFrontierTime, nrFrontiers
 
     exploration_goal = PointStamped()
     map_topic= rospy.get_param('~map_topic','/map')
@@ -186,8 +193,9 @@ def explore():
         pub.publish(points)
         rospy.sleep(1)
 
-        #adjusted_goal = shift_frontier_towards_robot(frontier, robot_position, offset=0.3)
+        adjusted_goal = shift_frontier_towards_robot(frontier, robot_position, offset=0.3)
         
+        print("NUmber of frontiers: ", nrFrontiers)
         go_to_point(frontier)
 
 #---------------------------------------------------------------------------------
